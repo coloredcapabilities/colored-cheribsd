@@ -26,3 +26,7 @@ nooptions	HID_DEBUG
 # CAM debugging
 nooptions	CAMDEBUG
 nooptions	CAM_DEBUG_FLAGS
+
+# CHERI revocation profiling
+# This introduces significant performance overhead
+nooptions 	CHERI_CAPREVOKE_STATS

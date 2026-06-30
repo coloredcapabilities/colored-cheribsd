@@ -65,15 +65,25 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <strings.h>
 #include <unistd.h>
 
 #include <sys/elf.h>
+#include <sys/bitstring.h>
 
 #include "libc_private.h"
 #include "mrs_utrace.h"
 #include "../../u_subr_unit.h"
-#include <sys/_unrhdr.h>
+#include "../../_unrhdr.h"
+#include "../../bitmap_otype_allocator.h"
 
+
+/* Uncomment to use flat bitmap allocator instead of unr allocator */
+#define BITMAP_ALLOCATOR_ACTIVATE
+
+#ifdef BITMAP_ALLOCATOR_ACTIVATE
+/* Struct instance and static bitmap defined here; functions in bitmap_otype_allocator.c */
+#endif /* BITMAP_ALLOCATOR_ACTIVATE */
 
 /*
  * Knobs:
@@ -326,6 +336,20 @@ static bool bound_pointers = false;
 static bool abort_on_validation_failure = true;
 static bool mrs_initialized = false;
 static int cheri_otypes_threshold = CHERI_OTYPE_USER_MAX - 2000;
+
+#ifdef BITMAP_ALLOCATOR_ACTIVATE
+static uint64_t static_bitmap[(CHERI_OTYPE_USER_MAX - CHERI_OTYPE_USER_MIN + 64) / 64];
+static struct bitmap_otype_allocator bitmap_otypes = {
+	.bitmap = (bitstr_t *)static_bitmap,
+	.low = CHERI_OTYPE_USER_MIN,
+	.high = CHERI_OTYPE_USER_MAX,
+	.busy = 0,
+	.num_bits = CHERI_OTYPE_USER_MAX - CHERI_OTYPE_USER_MIN + 1,
+	.hint = 0,
+	.lock = ATOMIC_FLAG_INIT,
+};
+static struct bitmap_otype_allocator *bitmap_otypes_ptr = &bitmap_otypes;
+#endif
 
 static int revoke_count = 0;
 static int malloc_count = 0;
@@ -739,8 +763,12 @@ app_quarantine_revoke_async(void)
 				}
 			}
 
+#ifdef BITMAP_ALLOCATOR_ACTIVATE
+			bitmap_otype_free_many(bitmap_otypes_ptr, (uint64_t *)persistent_sealing_bitmap_copy);
+#else
 			int uh_is_heap_alloc = cheri_otypes_ptr!=&cheri_otypes;
 			free_many_unr(&cheri_otypes_ptr, (u_int64_t *)persistent_sealing_bitmap_copy, uh_is_heap_alloc);
+#endif
 
 			/*
 			 * Don't munmap - the mapping is persistent and will be
@@ -998,7 +1026,11 @@ malloc_is_revoking(void)
  */
 
 static inline bool otypes_should_flush(){
+#ifdef BITMAP_ALLOCATOR_ACTIVATE
+	return bitmap_otypes_ptr->busy >= (u_int)cheri_otypes_threshold;
+#else
 	return cheri_otypes_ptr->busy >= cheri_otypes_threshold;
+#endif
 }
 
 static inline void
@@ -1010,8 +1042,13 @@ check_and_perform_flush()
 	 */
 	if (!otypes_should_flush())
 		return;
+#ifdef BITMAP_ALLOCATOR_ACTIVATE
+	mrs_debug_printf("check_and_perform_flush: otypes busy %d >= threshold %d\n",
+	    bitmap_otypes_ptr->busy, cheri_otypes_threshold);
+#else
 	mrs_debug_printf("check_and_perform_flush: otypes busy %d >= threshold %d\n",
 	    cheri_otypes_ptr->busy, cheri_otypes_threshold);
+#endif
 	/* Attempt to acquire the lock without blocking. */
 	if (!mrs_trylock(&mrs_revoke_lock)) {
 		return;
@@ -1198,9 +1235,13 @@ mrs_init_impl_locked(void)
 			exit(7);
 		}
 		global_sealing_bitmap_size = __builtin_cheri_length_get(global_sealing_bitmap);
+#ifdef BITMAP_ALLOCATOR_ACTIVATE
+		global_cheri_otypes_initialized = true;
+#else
 		/* Use shared global cheri_otypes from u_subr_unit */
 	
 		cheri_otypes_ptr = get_global_cheri_otypes();
+#endif
 	}
 
 
@@ -1251,6 +1292,10 @@ static void mrs_destructor(void)
 	if(getenv("CC_DEBUG")!=NULL){
 		mrs_printf("revoke counter: %d\n", revoke_count);
 		mrs_printf("alloc counter: %d\n", malloc_count);
+#ifdef BITMAP_ALLOCATOR_ACTIVATE
+		mrs_printf("Bitmap mem usage: %zu\n", bitmap_otype_mem_usage(bitmap_otypes_ptr));
+#else
+#endif
 	}
 }
 
@@ -1273,11 +1318,19 @@ fini(void)
 
 /* Colored capabilities*/
 static inline void* cc_set_objectid(void* p){
+#ifdef BITMAP_ALLOCATOR_ACTIVATE
+	int otype = bitmap_otype_alloc(bitmap_otypes_ptr);
+	while(otype<0){
+		check_and_perform_flush();
+		otype = bitmap_otype_alloc(bitmap_otypes_ptr);
+	}
+#else
 	int otype = alloc_unr(cheri_otypes_ptr);
 	while(otype<0){
 		check_and_perform_flush();
 		otype = alloc_unr(cheri_otypes_ptr);
 	}
+#endif
 	malloc_count++;
 	assert(otype >= 0);
     p = __builtin_cheri_cc_set_type(p, otype);
@@ -1349,10 +1402,18 @@ int malloc2(size_t size)
 {
 	int otype;
 	if(size == 0){
+#ifdef BITMAP_ALLOCATOR_ACTIVATE
+		return bitmap_otypes_ptr->busy;
+#else
 		return cheri_otypes_ptr->busy;
+#endif
 		otype = alloc_unr(cheri_otypes_ptr);
 	}else{
+#ifdef BITMAP_ALLOCATOR_ACTIVATE
+		otype = bitmap_otype_alloc_specific(bitmap_otypes_ptr, size);
+#else
 		otype = alloc_unr_specific(cheri_otypes_ptr, size);
+#endif
 	}
 	assert(otype);
 	return (otype);
