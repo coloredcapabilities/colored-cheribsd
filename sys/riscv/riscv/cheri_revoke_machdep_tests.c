@@ -8,6 +8,10 @@
  * Technology) under DARPA contract HR0011-18-C-0016 ("ECATS"), as part of the
  * DARPA SSITH research programme.
  *
+ * Colored-Cap modifications: 
+ *      Author: Ruben Sturm, Merve Gulmez
+ *      Copyright (c) 2025 Ericsson AB 
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
@@ -43,79 +47,7 @@
 #include <vm/vm_param.h>
 #include <vm/vm_map.h>
 #include <vm/vm_cheri_revoke.h>
-
-/* Check the coarse-grained MAP bitmap */
-static inline unsigned long
-vm_cheri_revoke_test_mem_map(const uint8_t * __capability crshadow,
-    uintcap_t cut)
-{
-	uint8_t bmbits;
-	const uint8_t * __capability bmloc;
-
-	ptraddr_t va = cheri_getbase(cut);
-
-	bmloc = crshadow - VM_CHERI_REVOKE_BSZ_OTYPE -
-	    (va / VM_CHERI_REVOKE_GSZ_MEM_MAP / 8);
-
-#ifdef CHERI_CAPREVOKE_FAST_COPYIN
-	/* XXX This is terribly, terribly unsafe and should go away. */
-	bmbits = *bmloc;
-#else
-	{
-		int bmbits_ext = fubyte(bmloc);
-		if (bmbits_ext == -1) {
-			printf("%s: failed to read shadow for %#.16lp"
-			    "(s=%#.16lp); assuming not revoked!\n",
-			    __func__, (void * __capability)cut, crshadow);
-			return (0);
-		}
-		bmbits = bmbits_ext & 0xFF;
-	}
-#endif
-
-	/* Fast path: often these are all zeros */
-
-	if (bmbits == 0) {
-		return (0);
-	}
-
-	return (bmbits & (1 << ((va / VM_CHERI_REVOKE_GSZ_MEM_MAP) % 8)));
-}
-
-/* Check the fine-grained NOMAP bitmap */
-static inline unsigned long
-vm_cheri_revoke_test_mem_nomap(const uint8_t * __capability crshadow,
-    uintcap_t cut)
-{
-	uint8_t bmbits;
-	const uint8_t * __capability bmloc;
-
-	ptraddr_t va = cheri_getbase(cut);
-
-	bmloc = crshadow + (va / VM_CHERI_REVOKE_GSZ_MEM_NOMAP / 8);
-
-#ifdef CHERI_CAPREVOKE_FAST_COPYIN
-	/* XXX This is terribly, terribly unsafe and should go away. */
-	bmbits = *bmloc;
-#else
-	{
-		int bmbits_ext = fubyte(bmloc);
-		if (bmbits_ext == -1) {
-			printf("%s: failed to read shadow for %#.16lp"
-			    "(s=%#.16lp); assuming not revoked!\n",
-			    __func__, (void * __capability)cut, crshadow);
-			return (0);
-		}
-		bmbits = bmbits_ext & 0xFF;
-	}
-#endif
-
-	if (bmbits == 0) {
-		return (0);
-	}
-
-	return bmbits & (1 << ((va / VM_CHERI_REVOKE_GSZ_MEM_NOMAP) % 8));
-}
+#include <vm/cc_revoke.h>
 
 static inline unsigned
 vm_cheri_revoke_test_range(vm_offset_t start, vm_offset_t end, uintcap_t cut)
@@ -125,49 +57,37 @@ vm_cheri_revoke_test_range(vm_offset_t start, vm_offset_t end, uintcap_t cut)
 	return (va >= start && va < end);
 }
 
-// TODO: if ((perms & CHERI_PERMS_HWALL_OTYPE) != 0)
-// TODO: if ((perms & CHERI_PERMS_HWALL_CID) != 0)
-
-static unsigned long
-vm_cheri_revoke_test_just_mem(const uint8_t * __capability crshadow,
-    uintcap_t cut, unsigned long perms, vm_offset_t start, vm_offset_t end)
-{
-	if ((perms & (CHERI_PERMS_HWALL_MEMORY | CHERI_PERM_SW_VMEM)) != 0) {
-		if (vm_cheri_revoke_test_mem_map(crshadow, cut))
-			return (1);
-
-		if ((perms & CHERI_PERM_SW_VMEM) == 0)
-			return (vm_cheri_revoke_test_mem_nomap(crshadow, cut));
+static inline unsigned long vm_cheri_revoke_test_mem_cc(uintcap_t cut, uint64_t sealing_bitmap){
+	uint64_t otype = cheri_gettype(cut);
+	if(otype >= SEALING_BITMAP_SIZE*8){
+		return 0;
 	}
-
-	return (0);
+	uint64_t byte_offset = otype/8;
+	uint64_t bit_offset = otype%8;
+	uint8_t* __capability sealing_bitmap_cap = cheri_capability_build_user_data(CHERI_PERM_LOAD | CHERI_PERM_STORE | CHERI_PERM_GLOBAL, sealing_bitmap, SEALING_BITMAP_SIZE, 0);
+	
+	const uint8_t * __capability byte_address = sealing_bitmap_cap + byte_offset;
+	int byte = fubyte(byte_address);
+	if (byte == -1) {
+		printf("%s: failed to read sealingbitmap for %#.16lp"
+			"(s=%#.16lp); assuming not revoked!\n",
+			__func__, (void * __capability)cut, byte_address);
+		return (0);
+	}
+	byte = byte & 0xFF;
+	if(byte==255){
+		return (1);
+	}else if(byte==0){
+		return (0);
+	}
+	return ((byte>>bit_offset)&1);
 }
 
-static unsigned long
-vm_cheri_revoke_test_just_mem_fine(const uint8_t * __capability crshadow,
-    uintcap_t cut, unsigned long perms, vm_offset_t start, vm_offset_t end)
-{
-	/*
-	 * Most capabilities are memory capabilities, most are unrevoked,
-	 * and comparatively few are VMMAP-bearing.... so do the load
-	 * first and only then do the permissions checks.
-	 */
-
-	if (vm_cheri_revoke_test_mem_nomap(crshadow, cut)) {
-		if (__builtin_expect(perms & CHERI_PERM_SW_VMEM,0)) {
-			return (0);
-		}
-
-		return ((perms & CHERI_PERMS_HWALL_MEMORY) != 0);
-	}
-
-	return (0);
-}
 
 static unsigned long
-vm_cheri_revoke_test_mem_fine_range(const uint8_t * __capability crshadow,
-    uintcap_t cut, unsigned long perms, vm_offset_t start, vm_offset_t end)
+vm_cheri_revoke_test_cc(uintcap_t cut, unsigned long perms, vm_offset_t start, vm_offset_t end, uint64_t sealing_bitmap)
 {
+	return 0;
 	/*
 	 * Only check the capability if it has some memory permissions.
 	 */
@@ -176,12 +96,14 @@ vm_cheri_revoke_test_mem_fine_range(const uint8_t * __capability crshadow,
 			return (1);
 
 		if ((perms & CHERI_PERM_SW_VMEM) == 0) {
-			return vm_cheri_revoke_test_mem_nomap(crshadow, cut);
+			return vm_cheri_revoke_test_mem_cc(cut, sealing_bitmap);
 		}
 	}
 
 	return (0);
 }
+
+
 
 void
 vm_cheri_revoke_set_test(vm_map_t map, int flags)
@@ -191,7 +113,7 @@ vm_cheri_revoke_set_test(vm_map_t map, int flags)
 	    VM_CHERI_REVOKE_CF_NO_OTYPES |
 	    VM_CHERI_REVOKE_CF_NO_CIDS:
 
-		map->vm_cheri_revoke_test = vm_cheri_revoke_test_mem_fine_range;
+		map->vm_cheri_revoke_test = vm_cheri_revoke_test_cc;
 		break;
 
 	case VM_CHERI_REVOKE_CF_NO_COARSE_MEM |
@@ -199,14 +121,14 @@ vm_cheri_revoke_set_test(vm_map_t map, int flags)
 	    VM_CHERI_REVOKE_CF_NO_CIDS |
 	    VM_CHERI_REVOKE_CF_NO_REV_ENTRY:
 
-		map->vm_cheri_revoke_test = vm_cheri_revoke_test_just_mem_fine;
+		map->vm_cheri_revoke_test = vm_cheri_revoke_test_cc;
 		break;
 
 	case VM_CHERI_REVOKE_CF_NO_OTYPES |
 	    VM_CHERI_REVOKE_CF_NO_CIDS |
 	    VM_CHERI_REVOKE_CF_NO_REV_ENTRY:
 
-		map->vm_cheri_revoke_test = vm_cheri_revoke_test_just_mem;
+		map->vm_cheri_revoke_test = vm_cheri_revoke_test_cc;
 		break;
 
 	default:

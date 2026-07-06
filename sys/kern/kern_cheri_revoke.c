@@ -3,6 +3,10 @@
  *
  * Copyright (c) 2019 Nathaniel Filardo
  * Copyright (c) 2020-2022 Microsoft Corp.
+ * 
+ * Colored-Cap modifications: 
+ *      Author: Ruben Sturm, Merve Gulmez
+ *      Copyright (c) 2025 Ericsson AB 
  *
  * This software was developed by SRI International and the University of
  * Cambridge Computer Laboratory (Department of Computer Science and
@@ -59,6 +63,8 @@
 #include <cheri/revoke_kern.h>
 #include <vm/vm_cheri_revoke.h>
 #include <sys/syscallsubr.h>
+
+#include <vm/cc_revoke.h>
 
 /*
  * We reserve the FEATURE(cheri_revoke) and VM SYSCTL() namespace cheri_revoke
@@ -538,6 +544,8 @@ fast_out:
 			    crstp, &crepochs));
 		}
 
+
+
 		/*
 		 * Don't bump the epoch count here, just the state!  Wait
 		 * until we're certain it's actually open, which we can only
@@ -552,6 +560,18 @@ fast_out:
 	}
 	vm_map_unlock(vmm);
 
+
+	/*
+	 * Copy the sealing bitmap. The mapping is now persistent per-process,
+	 * allocated on first use and reused for subsequent revocation passes.
+	 * vm_cheri_revoke_sealing_bitmap_copy handles the allocation/reuse logic.
+	 */
+	res = vm_cheri_revoke_sealing_bitmap_copy(td, vmm, &vmcrc);
+	if (res != KERN_SUCCESS) {
+		return (cheri_revoke_fini(crsi, vm_mmap_to_errno(res),
+			crstp, &crepochs));
+	}
+	/* Note: cheri_cc_sealing_base_copy is now set inside vm_cheri_revoke_sealing_bitmap_copy */
 	/*
 	 * I am the revoker; expose an incremented epoch to userland
 	 * for its enqueue side.  Use a store fence to ensure that this
@@ -568,6 +588,7 @@ fast_out:
 	vm_cheri_revoke_info_page(vmm, td->td_proc->p_sysent, &info_page);
 	vm_cheri_revoke_publish_epochs(info_page, &crepochs);
 	wmb();
+
 
 	/*
 	 * If we've already begun the load-side work and are now just going
@@ -778,6 +799,7 @@ kern_cheri_revoke_get_shadow(struct thread *td, int flags,
 
 	switch (sel) {
 	case CHERI_REVOKE_SHADOW_NOVMEM:
+		//panic("shadowbitmap is removed, only use CHERI_CC_SEALING_BITMAP or CHERI_REVOKE_SHADOW_INFO_STRUCT\n");
 
 		if (cheri_gettag(arena) == 0)
 			return (EINVAL);
@@ -797,6 +819,7 @@ kern_cheri_revoke_get_shadow(struct thread *td, int flags,
 
 	case CHERI_REVOKE_SHADOW_OTYPE:
 	    {
+		//panic("shadowbitmap is removed, only use CHERI_CC_SEALING_BITMAP or CHERI_REVOKE_SHADOW_INFO_STRUCT\n");	
 		int reqperms;
 
 		if (cheri_gettag(arena) == 0)
@@ -818,13 +841,39 @@ kern_cheri_revoke_get_shadow(struct thread *td, int flags,
 		break;
 	    }
 	case CHERI_REVOKE_SHADOW_INFO_STRUCT:
-	case CHERI_REVOKE_SHADOW_NOVMEM_ENTIRE: // XXX
-	    {
+	{
 		/* Anyone's allowed to ask, I guess; ->arena ignored. */
 		cres = vm_cheri_revoke_shadow_cap(curproc->p_sysent,
 			sel, 0, 0, 0);
 		break;
+	}
+	case CHERI_REVOKE_SHADOW_NOVMEM_ENTIRE: // XXX
+	    {	
+		//panic("shadowbitmap is removed, only use CHERI_CC_SEALING_BITMAP or CHERI_REVOKE_SHADOW_INFO_STRUCT\n");
 	    }
+	case CHERI_CC_SEALING_BITMAP:
+		{
+		struct sysentvec* sv = curproc->p_sysent;
+		vm_offset_t cc_sealing_base = sv->sv_cheri_cc_sealing_base;
+		cres = cheri_capability_build_user_data(CHERI_PERM_LOAD | CHERI_PERM_STORE | CHERI_PERM_GLOBAL,
+		    cc_sealing_base, SEALING_BITMAP_SIZE, 0);
+		break;
+		}
+	case CHERI_CC_SEALING_BITMAP_COPY:
+		{
+		struct proc* p = td->td_proc;
+		if(p->cheri_cc_sealing_base_copy==0){
+			return -1;
+		}
+		cres = cheri_capability_build_user_data(CHERI_PERM_LOAD | CHERI_PERM_STORE | CHERI_PERM_GLOBAL,
+			p->cheri_cc_sealing_base_copy, SEALING_BITMAP_SIZE, 0);
+		/*
+		 * Don't reset cheri_cc_sealing_base_copy - the mapping is now
+		 * persistent and will be reused for subsequent revocation passes.
+		 * Userspace should NOT munmap this region.
+		 */
+		break;
+		}
 	default:
 		return (EINVAL);
 	}

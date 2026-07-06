@@ -82,6 +82,11 @@
 #include <vm/vm_extern.h>
 #include <vm/uma.h>
 
+#ifdef CHERI_CAPREVOKE
+#include <vm/vm_cheri_revoke.h>
+#include <vm/cc_revoke.h>
+#endif
+
 #ifdef KDTRACE_HOOKS
 #include <sys/dtrace_bsd.h>
 dtrace_fork_func_t	dtrace_fasttrap_fork;
@@ -859,7 +864,7 @@ int
 fork1(struct thread *td, struct fork_req *fr)
 {
 	struct proc *p1, *newproc;
-	struct thread *td2;
+	struct thread *td2 = NULL;
 	struct vmspace *vm2;
 	struct ucred *cred;
 	struct file *fp_procdesc;

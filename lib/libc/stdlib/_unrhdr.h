@@ -1,12 +1,8 @@
 /*-
  * SPDX-License-Identifier: BSD-2-Clause
  *
- * Copyright (c) 2021 SRI International
- *
- * This software was developed by SRI International and the University of
- * Cambridge Computer Laboratory (Department of Computer Science and
- * Technology) under DARPA contract HR0011-18-C-0016 ("ECATS"), as part of the
- * DARPA SSITH research programme.
+ * Copyright (c) 2004 Poul-Henning Kamp
+ * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -30,27 +26,26 @@
  * SUCH DAMAGE.
  */
 
-#include <stdbool.h>
-#include <stdlib.h>
+#ifndef _SYS_UNRHDR_H
+#define _SYS_UNRHDR_H
 
-#pragma GCC diagnostic ignored "-Wunused-parameter"
+#include <sys/queue.h>
 
-/*
- * Do-nothing stub for malloc implementations that don't support
- * revocation.
- */
-void
-malloc_revoke(void)
-{
-}
+struct mtx;
 
-bool malloc_is_revoking(void);
-bool
-malloc_is_revoking(void)
-{
-	return (false);
-}
+/* Header element for a unr number space. */
 
-int malloc2(size_t size){
-	return 0;
-}
+struct unrhdr {
+	TAILQ_HEAD(unrhd,unr)	head;
+	u_int			low;	/* Lowest item */
+	u_int			high;	/* Highest item */
+	u_int			busy;	/* Count of allocated items */
+	u_int			alloc;	/* Count of memory allocations */
+	u_int			first;	/* items in allocated from start */
+	u_int			last;	/* items free at end */
+	struct mtx		*mtx;
+	TAILQ_HEAD(unrfr,unr)	ppfree;	/* Items to be freed after mtx
+					   lock dropped */
+};
+
+#endif

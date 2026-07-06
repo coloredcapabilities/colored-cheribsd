@@ -7,6 +7,10 @@
  * This code is derived from software contributed to Berkeley by
  * The Mach Operating System project at Carnegie-Mellon University.
  *
+ * Colored-Cap modifications: 
+ *      Author: Ruben Sturm
+ *      Copyright (c) 2025 Ericsson AB 
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
@@ -201,9 +205,8 @@ vm_map_entry_system_wired_count(vm_map_entry_t entry)
  *
  * Returns any nonzero value to indicate revocation required.
  */
-typedef unsigned long (*vm_cheri_revoke_test_fn)(
-    const uint8_t * __capability shadow, uintcap_t cut, unsigned long cutperm,
-    vm_offset_t start, vm_offset_t end);
+typedef unsigned long (*vm_cheri_revoke_test_fn)(uintcap_t cut, unsigned long cutperm,
+    vm_offset_t start, vm_offset_t end, uint64_t sealing_bitmap);
 
 #ifdef CHERI_CAPREVOKE_STATS
 struct cheri_revoke_stats;

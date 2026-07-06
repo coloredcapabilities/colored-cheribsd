@@ -4,6 +4,10 @@
  * Copyright (c) 2019 Nathaniel Filardo
  * All rights reserved.
  *
+ * Colored-Cap modifications: 
+ *      Author: Ruben Sturm, Merve Gulmez
+ *      Copyright (c) 2025 Ericsson AB 
+ *
  * This software was developed by SRI International and the University of
  * Cambridge Computer Laboratory (Department of Computer Science and
  * Technology) under DARPA contract HR0011-18-C-0016 ("ECATS"), as part of the
@@ -87,12 +91,15 @@ cheri_revoke_cap(uintcap_t c)
 static const size_t VM_CHERI_REVOKE_GSZ_MEM_MAP = PAGE_SIZE;
 
 struct vm_cheri_revoke_cookie {
-	const uint8_t * __capability crshadow;
 	struct vm_map		*map;
+	uint64_t sealing_bitmap_copy;
+	
 };
 
 int vm_cheri_revoke_cookie_init(struct vm_map *map,
     struct vm_cheri_revoke_cookie *baked);
+
+int vm_cheri_revoke_sealing_bitmap_copy(struct thread *td, struct vm_map* map, struct vm_cheri_revoke_cookie* crc);
 
 void vm_cheri_revoke_info_page(struct vm_map *map, struct sysentvec *,
     struct cheri_revoke_info_page * __capability *);

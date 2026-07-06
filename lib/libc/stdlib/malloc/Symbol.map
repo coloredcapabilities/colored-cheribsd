@@ -2,6 +2,7 @@ FBSD_1.0 {
 	_malloc_options;
 	_malloc_message;
 	malloc;
+	malloc2;
 	posix_memalign;
 	calloc;
 	realloc;

@@ -100,6 +100,7 @@
 #include <cheri/revoke.h>
 #include <cheri/revoke_kern.h>
 #include <vm/vm_cheri_revoke.h>
+#include <vm/cc_revoke.h>
 #endif
 
 #include <vm/vm.h>
@@ -1851,7 +1852,9 @@ vm_fault(vm_map_t map, vm_offset_t vaddr, vm_prot_t fault_type,
 	hardfault = false;
 
 RetryFault:
+
 	fs.fault_type = fault_type;
+
 
 	/*
 	 * Find the backing store object and offset into it to begin the

@@ -3815,6 +3815,7 @@ je_malloc_underlying_allocation(void *ptr) {
 				ret = cheri_andperm(
 				    cheri_setbounds(ret, underlying_size),
 				    CHERI_PERMS_USERSPACE_DATA | CHERI_PERM_SW_VMEM);
+        ret = __builtin_cheri_cc_set_type(ret, -1); 
 		}
 	}
 

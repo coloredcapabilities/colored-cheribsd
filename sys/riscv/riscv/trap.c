@@ -10,6 +10,10 @@
  * Computer Laboratory as part of the CTSRD Project, with support from the
  * UK Higher Education Innovation Fund (HEIF).
  *
+ *  Colored-Cap modifications: 
+ *      Author: Ruben Sturm, Merve Gulmez
+ *      Copyright (c) 2025 Ericsson AB 
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
@@ -63,6 +67,7 @@
 #include <cheri/cheric.h>
 #ifdef CHERI_CAPREVOKE
 #include <vm/vm_cheri_revoke.h>
+#include <vm/cc_revoke.h>
 #endif
 #endif
 
@@ -374,12 +379,21 @@ page_fault_handler(struct trapframe *frame, int usermode)
 		if (stval >= VM_MIN_KERNEL_ADDRESS) {
 			map = kernel_map;
 		} else {
-			if (pcb->pcb_onfault == 0)
+			if (pcb->pcb_onfault == 0){
+#ifdef CHERI_CAPREVOKE
+				u_long ccp = cc_read();
+				if(stval < ccp || stval > ccp+SEALING_BITMAP_SIZE){
+					goto fatal;
+				} else {
+					map = &p->p_vmspace->vm_map;
+				}
+#else
 				goto fatal;
+#endif
+			}
 			map = &p->p_vmspace->vm_map;
 		}
 	}
-
 	va = trunc_page(stval);
 
 #ifdef CHERI_CAPREVOKE
@@ -415,8 +429,9 @@ page_fault_handler(struct trapframe *frame, int usermode)
 		ftype = VM_PROT_READ;
 	}
 
-	if (VIRT_IS_VALID(va) && pmap_fault(map->pmap, va, ftype))
+	if (VIRT_IS_VALID(va) && pmap_fault(map->pmap, va, ftype)){
 		goto done;
+	}
 
 #ifdef CHERI_CAPREVOKE
 skip_pmap:

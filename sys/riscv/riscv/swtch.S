@@ -319,6 +319,11 @@ ENTRY(cpu_throw)
 	clc	cra, (PCB_RA)(c13)
 	clc	csp, (PCB_SP)(c13)
 
+	/*Load colored cap register */
+	//cld s0, (PCB_CCP)(c13)
+	//csrw ccp, s0
+
+
 	/* s[0-11] */
 	clc	cs0, (PCB_S + 0 * 16)(c13)
 	clc	cs1, (PCB_S + 1 * 16)(c13)
@@ -421,6 +426,10 @@ ENTRY(cpu_switch)
 	csc	cs9, (PCB_S + 9 * 16)(c13)
 	csc	cs10, (PCB_S + 10 * 16)(c13)
 	csc	cs11, (PCB_S + 11 * 16)(c13)
+
+	/*Store colored cap register */
+	//csrr s0, ccp
+	//csd s0, (PCB_CCP)(c13)
 #else
 	/* Store ra, sp and the callee-saved registers */
 	sd	ra, (PCB_RA)(x13)
@@ -557,10 +566,16 @@ ENTRY(cpu_switch)
 	ld	x13, TD_PCB(a1)
 #endif
 
+
+
 #ifdef __CHERI_PURE_CAPABILITY__
 	/* Restore the registers */
 	clc	cra, (PCB_RA)(c13)
 	clc	csp, (PCB_SP)(c13)
+
+	/*Load colored cap register */
+	//cld s0, (PCB_CCP)(c13)
+	//csrw ccp, s0
 
 	/* s[0-11] */
 	clc	cs0, (PCB_S + 0 * 16)(c13)
@@ -683,6 +698,7 @@ ENTRY(fork_trampoline)
 	cspecialr ct0, ddc
 	csc	ct0, (TF_SIZE + KF_DDC)(csp)
 #endif
+
 
 	/*
 	 * Switch to user DDC.  After this point, all stack accesses
@@ -825,6 +841,10 @@ ENTRY(savectx)
 	csc	cs9, (PCB_S + 9 * 16)(ca0)
 	csc	cs10, (PCB_S + 10 * 16)(ca0)
 	csc	cs11, (PCB_S + 11 * 16)(ca0)
+
+	/*Store colored cap register */
+	//csrr s0, ccp
+	//csd s0, (PCB_CCP)(ca0)
 #elif __has_feature(capabilities)
 	/* Store ra, sp and the callee-saved registers */
 	sc	cra, (PCB_RA)(a0)
@@ -845,6 +865,10 @@ ENTRY(savectx)
 	sc	cs9, (PCB_S + 9 * 16)(a0)
 	sc	cs10, (PCB_S + 10 * 16)(a0)
 	sc	cs11, (PCB_S + 11 * 16)(a0)
+
+	/*Store colored cap register */
+	//csrr s0, ccp
+	//sd s0, (PCB_CCP)(a0)
 #else
 	/* Store ra, sp and the callee-saved registers */
 	sd	ra, (PCB_RA)(a0)

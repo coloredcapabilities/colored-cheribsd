@@ -53,6 +53,7 @@ struct pcb {
 	uint64_t	pcb_tp;		/* Thread pointer */
 	uint64_t	pcb_s[12];	/* Saved registers */
 #endif
+	uint64_t	pcb_ccp;	/* colored cap pointer*/
 	uint64_t	pcb_x[32][2];	/* Floating point registers */
 	uint64_t	pcb_fcsr;	/* Floating point control reg */
 	uint64_t	pcb_fpflags;	/* Floating point flags */

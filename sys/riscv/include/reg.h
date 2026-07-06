@@ -10,6 +10,10 @@
  * Computer Laboratory as part of the CTSRD Project, with support from the
  * UK Higher Education Innovation Fund (HEIF).
  *
+ *  Colored-Cap modifications: 
+ *      Author: Ruben Sturm, Merve Gulmez
+ *      Copyright (c) 2025 Ericsson AB 
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
@@ -47,6 +51,7 @@ struct reg {
 	__uint64_t	a[8];		/* function arguments */
 	__uint64_t	sepc;		/* exception program counter */
 	__uint64_t	sstatus;	/* status register */
+	__uint64_t	ccp;	/* colored cap register */
 };
 
 struct fpreg {
@@ -71,6 +76,8 @@ struct capreg {
 	__uintcap_t ddc;
 	__uint64_t tagmask;
 	__uint64_t pad;
+
+	__uint64_t	ccp;	/* colored cap register */
 };
 #endif
 

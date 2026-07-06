@@ -8,6 +8,10 @@
  * Technology) under DARPA contract HR0011-18-C-0016 ("ECATS"), as part of the
  * DARPA SSITH research programme.
  *
+ * Colored-Cap modifications: 
+ *      Author: Ruben Sturm, Merve Gulmez
+ *      Copyright (c) 2025 Ericsson AB 
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
@@ -89,14 +93,12 @@ vm_cheri_revoke_tlb_fault(void)
  */
 
 static int
-vm_do_cheri_revoke(int *res, const struct vm_cheri_revoke_cookie *crc,
-    const uint8_t * __capability crshadow, vm_cheri_revoke_test_fn ctp,
+vm_do_cheri_revoke(int *res, const struct vm_cheri_revoke_cookie *crc, vm_cheri_revoke_test_fn ctp,
     uintcap_t * __capability cutp, uintcap_t cut, vm_offset_t start,
     vm_offset_t end)
 {
 	int perms = cheri_getperm(cut);
 	CHERI_REVOKE_STATS_FOR(crst, crc);
-
 	if (perms == 0) {
 		/* For revoked or permissionless caps, do nothing. */
 
@@ -108,7 +110,7 @@ vm_do_cheri_revoke(int *res, const struct vm_cheri_revoke_cookie *crc,
 		 */
 
 		CHERI_REVOKE_STATS_BUMP(crst, caps_found_revoked);
-	} else if (cheri_gettag(cut) && ctp(crshadow, cut, perms, start, end)) {
+	} else if (cheri_gettag(cut) && ctp(cut, perms, start, end, crc->sealing_bitmap_copy)) {
 		void * __capability cscratch;
 		int ok;
 
@@ -255,8 +257,7 @@ SYSINIT(
 
 static inline int
 vm_cheri_revoke_page_iter(const struct vm_cheri_revoke_cookie *crc,
-    int (*cb)(int *, const struct vm_cheri_revoke_cookie *,
-	const uint8_t * __capability, vm_cheri_revoke_test_fn,
+    int (*cb)(int *, const struct vm_cheri_revoke_cookie *, vm_cheri_revoke_test_fn,
 	uintcap_t * __capability, uintcap_t, vm_offset_t, vm_offset_t),
     uintcap_t * __capability mvu, vm_offset_t mve)
 {
@@ -274,7 +275,6 @@ vm_cheri_revoke_page_iter(const struct vm_cheri_revoke_cookie *crc,
 
 	/* Load once up front, which is almost as good as const */
 	vm_cheri_revoke_test_fn ctp = crc->map->vm_cheri_revoke_test;
-	const uint8_t * __capability crshadow = crc->crshadow;
 #ifdef CHERI_CAPREVOKE_CLOADTAGS
 	uint8_t _cloadtags_stride = cloadtags_stride;
 	uint64_t tags, nexttags;
@@ -311,7 +311,7 @@ vm_cheri_revoke_page_iter(const struct vm_cheri_revoke_cookie *crc,
 			if (!(tags & 1))
 				continue;
 
-			if (cb(&res, crc, crshadow, ctp, mvt, *mvt, start, end))
+			if (cb(&res, crc, ctp, mvt, *mvt, start, end))
 				goto out;
 		}
 
@@ -326,7 +326,7 @@ vm_cheri_revoke_page_iter(const struct vm_cheri_revoke_cookie *crc,
 			if (!(tags & 1))
 				continue;
 
-			if (cb(&res, crc, crshadow, ctp, mvt, *mvt, start, end))
+			if (cb(&res, crc, ctp, mvt, *mvt, start, end))
 				goto out;
 		}
 	}
@@ -338,7 +338,7 @@ vm_cheri_revoke_page_iter(const struct vm_cheri_revoke_cookie *crc,
 		uintcap_t cut = *mvu;
 
 		if (cheri_gettag(cut)) {
-			if (cb(&res, crc, crshadow, ctp, mvu, cut, start, end))
+			if (cb(&res, crc, ctp, mvu, cut, start, end))
 				goto out;
 		}
 	}
@@ -371,8 +371,8 @@ vm_cheri_revoke_test(const struct vm_cheri_revoke_cookie *crc, uintcap_t cut)
 		    (vm_pointer_t)vm_cheri_revoke_tlb_fault;
 		enable_user_memory_access();
 #endif
-		res = crc->map->vm_cheri_revoke_test(crc->crshadow, cut,
-		    cheri_getperm(cut), start, end);
+		res = crc->map->vm_cheri_revoke_test(cut,
+		    cheri_getperm(cut), start, end, crc->sealing_bitmap_copy);
 #ifdef CHERI_CAPREVOKE_FAST_COPYIN
 		disable_user_memory_access();
 		curthread->td_pcb->pcb_onfault = prev_onfault;
@@ -426,8 +426,7 @@ vm_cheri_revoke_page_rw(const struct vm_cheri_revoke_cookie *crc, vm_page_t m)
 
 static inline int
 vm_cheri_revoke_page_ro_adapt(int *res,
-    const struct vm_cheri_revoke_cookie *vmcrc,
-    const uint8_t * __capability crshadow, vm_cheri_revoke_test_fn ctp,
+    const struct vm_cheri_revoke_cookie *vmcrc, vm_cheri_revoke_test_fn ctp,
     uintcap_t * __capability cutp __unused, uintcap_t cut, vm_offset_t start,
     vm_offset_t end)
 {
@@ -437,7 +436,7 @@ vm_cheri_revoke_page_ro_adapt(int *res,
 
 	*res |= VM_CHERI_REVOKE_PAGE_HASCAPS;
 
-	if (ctp(crshadow, cut, cheri_getperm(cut), start, end)) {
+	if (ctp(cut, cheri_getperm(cut), start, end, vmcrc->sealing_bitmap_copy)) {
 		*res |= VM_CHERI_REVOKE_PAGE_DIRTY;
 
 		/* One dirty answer is as good as any other; stop eary */

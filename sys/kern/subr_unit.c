@@ -351,7 +351,7 @@ free_iter_unr(void *handle)
  *
  * Called at all boundaries of this API.
  */
-static void
+static int
 check_unrhdr(struct unrhdr *uh, int line)
 {
 	struct unr *up;
@@ -381,14 +381,15 @@ check_unrhdr(struct unrhdr *uh, int line)
 	KASSERT (z == uh->alloc,
 	    ("UNR inconsistency: chunks %u found %u (line %d)\n",
 	    uh->alloc, z, line));
+	return 0;
 }
 
 #else
 
-static __inline void
+static __inline int
 check_unrhdr(struct unrhdr *uh __unused, int line __unused)
 {
-
+	return 0;
 }
 
 #endif

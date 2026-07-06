@@ -4,6 +4,10 @@
  * Copyright (c) 1982, 1988, 1991 The Regents of the University of California.
  * All rights reserved.
  *
+ * Colored-Cap modifications: 
+ *      Author: Ruben Sturm
+ *      Copyright (c) 2025 Ericsson AB 
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
@@ -125,6 +129,8 @@ struct sysentvec {
 	vm_offset_t	sv_cheri_revoke_shadow_base;
 	vm_offset_t	sv_cheri_revoke_shadow_offset;
 	vm_offset_t	sv_cheri_revoke_shadow_length;
+	vm_offset_t	sv_cheri_cc_sealing_base;
+
 	vm_offset_t	sv_cheri_revoke_info_page;
 #endif
 	size_t		sv_psstringssz;	/* PS_STRINGS size */

@@ -72,6 +72,9 @@ ASSYM(PCB_S, offsetof(struct pcb, pcb_s));
 ASSYM(PCB_X, offsetof(struct pcb, pcb_x));
 ASSYM(PCB_FCSR, offsetof(struct pcb, pcb_fcsr));
 
+ASSYM(PCB_CCP, offsetof(struct pcb, pcb_ccp));
+
+
 ASSYM(SF_UC, offsetof(struct sigframe, sf_uc));
 #ifdef COMPAT_FREEBSD64
 ASSYM(SF64_UC, offsetof(struct sigframe64, sf_uc));
@@ -104,6 +107,8 @@ ASSYM(TF_DDC, offsetof(struct trapframe, tf_ddc));
 ASSYM(TF_STVAL, offsetof(struct trapframe, tf_stval));
 ASSYM(TF_SCAUSE, offsetof(struct trapframe, tf_scause));
 ASSYM(TF_SSTATUS, offsetof(struct trapframe, tf_sstatus));
+
+ASSYM(TF_CCP, offsetof(struct trapframe, tf_ccp));
 
 ASSYM(KF_TP, offsetof(struct kernframe, kf_tp));
 #if __has_feature(capabilities) && !defined(__CHERI_PURE_CAPABILITY__)

@@ -13,7 +13,7 @@ MISRCS+=C99_Exit.c a64l.c abort.c abs.c atexit.c atof.c atoi.c atol.c atoll.c \
 	random.c reallocarray.c reallocf.c realpath.c remque.c \
 	set_constraint_handler_s.c strfmon.c strtoimax.c \
 	strtol.c strtold.c strtoll.c strtoq.c strtoul.c strtonum.c strtoull.c \
-	strtoumax.c strtouq.c system.c tdelete.c tfind.c tsearch.c twalk.c
+	strtoumax.c strtouq.c system.c tdelete.c tfind.c tsearch.c twalk.c u_subr_unit.c
 
 CFLAGS.qsort.c+= -Wsign-compare
 

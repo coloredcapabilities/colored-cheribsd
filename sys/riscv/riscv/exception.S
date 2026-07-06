@@ -206,6 +206,11 @@
 	csd	t0, (TF_STVAL)(csp)
 	csrr	t0, scause
 	csd	t0, (TF_SCAUSE)(csp)
+.if \mode == 0
+	/*Store colored cap register */
+	//csrr t0, ccp
+	//csd t0, (TF_CCP)(csp)
+.endif
 #else
 	csrr	t0, sstatus
 	sd	t0, (TF_SSTATUS)(sp)
@@ -312,6 +317,14 @@
 	/* And restore the user's global pointer */
 	clc	cgp, (TF_GP)(csp)
 .endif
+
+.if \mode == 0	/* We came from userspace. */
+	/*Load colored cap register */
+	//cld t0, (TF_CCP)(csp)
+	//csrw ccp, t0
+.endif
+
+
 
 	clc	cra, (TF_RA)(csp)
 

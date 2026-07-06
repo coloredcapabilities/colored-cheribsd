@@ -9,6 +9,10 @@
  * Co. or Unix System Laboratories, Inc. and are reproduced herein with
  * the permission of UNIX System Laboratories, Inc.
  *
+ * Colored-Cap modifications: 
+ *      Author: Ruben Sturm, Merve Gulmez
+ *      Copyright (c) 2025 Ericsson AB 
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
@@ -724,6 +728,9 @@ struct proc {
 	int		p_pendingexits; /* (c) Count of pending thread exits. */
 	struct filemon	*p_filemon;	/* (c) filemon-specific data. */
 	int		p_pdeathsig;	/* (c) Signal from parent on exit. */
+#ifdef CHERI_CAPREVOKE
+	uint64_t	cheri_cc_sealing_base_copy; /* (c) Persistent sealing bitmap copy mapping address. */
+#endif
 /* End area that is zeroed on creation. */
 #define	p_endzero	p_magic
 
@@ -749,6 +756,7 @@ struct proc {
 	vm_offset_t	p_psstrings;
 #if __has_feature(capabilities)
 	struct cheri_c18n_info	*p_c18n_info;	/* (x) Compartment info block */
+
 #endif
 /* End area that is copied on creation. */
 #define	p_endcopy	p_xexit
@@ -783,6 +791,7 @@ struct proc {
 
 	TAILQ_HEAD(, kq_timer_cb_data)	p_kqtim_stop;	/* (c) */
 	LIST_ENTRY(proc) p_jaillist;	/* (d) Jail process linkage. */
+
 };
 
 #define	p_session	p_pgrp->pg_session

@@ -3,6 +3,10 @@
  *
  * Copyright (c) 1993, David Greenman
  * All rights reserved.
+ * 
+ * Colored-Cap modifications: 
+ *      Author: Ruben Sturm, Merve Gulmez
+ *      Copyright (c) 2025 Ericsson AB 
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -83,6 +87,7 @@
 #include <vm/vm_map.h>
 #ifdef CHERI_CAPREVOKE
 #include <vm/vm_cheri_revoke.h>
+#include <vm/cc_revoke.h>
 #endif
 #include <vm/vm_kern.h>
 #include <vm/vm_extern.h>
@@ -359,7 +364,6 @@ int
 kern_execve(struct thread *td, struct image_args *args,
     void * __capability mac_p, struct vmspace *oldvmspace)
 {
-
 	TSEXEC(td->td_proc->p_pid, args->begin_argv);
 	AUDIT_ARG_ARGV(args->begin_argv, args->argc,
 	    exec_args_get_begin_envv(args) - args->begin_argv);
@@ -1186,6 +1190,16 @@ exec_new_vmspace(struct image_params *imgp, struct sysentvec *sv)
 		    MAP_ASLR_IGNSTART | MAP_ASLR_STACK | MAP_WXORX);
 		vm_map_unlock(map);
 	} else {
+#ifdef CHERI_CAPREVOKE
+		/*
+		 * Unmap the persistent sealing bitmap copy before vmspace_exec
+		 * replaces the address space; otherwise the mapping is leaked.
+		 * Reset the field so the reuse path in
+		 * vm_cheri_revoke_sealing_bitmap_copy does not follow a stale
+		 * address into the new address space.
+		 */
+		cc_dealloc_sealing_bitmap(p);
+#endif
 		error = vmspace_exec(p, sv_minuser, sv->sv_maxuser);
 		if (error)
 			return (error);
@@ -1358,7 +1372,7 @@ exec_map_stack(struct image_params *imgp)
 	 * see a per-sv hook here.
 	 */
 	if (sv->sv_flags & SV_CHERI) {
-		error = vm_map_install_cheri_revoke_shadow(map, sv);
+		error = vm_map_install_cc_sealing_bitmap(map, sv);
 
 		if (error != KERN_SUCCESS)
 			return (vm_mmap_to_errno(error));

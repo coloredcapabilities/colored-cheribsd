@@ -3,6 +3,10 @@
  *
  * Copyright (c) 2019 Nathaniel Filardo
  * Copyright (c) 2020-2022 Microsoft Corp.
+ * 
+ * Colored-Cap modifications: 
+ *      Author: Ruben Sturm, Merve Gulmez
+ *      Copyright (c) 2025 Ericsson AB 
  *
  * This software was developed by SRI International and the University of
  * Cambridge Computer Laboratory (Department of Computer Science and
@@ -50,6 +54,8 @@
 #include <sys/sysctl.h>
 #include <sys/sysent.h>
 #include <sys/unistd.h>
+#include <sys/resourcevar.h>
+
 
 #include <vm/vm.h>
 #include <vm/vm_param.h>
@@ -64,6 +70,7 @@
 #include <cheri/revoke.h>
 #include <cheri/revoke_kern.h>
 #include <vm/vm_cheri_revoke.h>
+#include <vm/cc_revoke.h>
 
 static void vm_cheri_revoke_pass_pre(vm_map_t);
 static void vm_cheri_revoke_pass_post(vm_map_t);
@@ -131,7 +138,6 @@ vm_cheri_revoke_pass_async_pre(vm_map_t map, struct vm_cheri_revoke_cookie *crc)
 
 	cheri_revoke_st_set(&map->vm_cheri_async_revoke_st, epoch + 1,
 	    CHERI_REVOKE_ST_INITED);
-	map->vm_cheri_async_revoke_shadow = crc->crshadow;
 }
 
 static void
@@ -1197,6 +1203,120 @@ vm_cheri_assert_consistent_clg(struct vm_map *map)
 	}
 }
 
+
+/*
+//copy the sealing bitmap using CoW
+int vm_cheri_revoke_sealing_bitmap_copy(struct thread *td, vm_map_t map, struct vm_cheri_revoke_cookie* crc){
+	u_long sealing_bitmap_base = cc_read();
+
+	vm_map_entry_t entry;
+	vm_object_t obj;
+	vm_pindex_t pindex;
+	vm_prot_t prot;
+	boolean_t wired;
+
+	//int error = vm_map_protect(map, sealing_bitmap_base, sealing_bitmap_base+SEALING_BITMAP_SIZE, VM_PROT_READ | VM_PROT_COPY,  VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY, VM_MAP_PROTECT_SET_PROT);
+	int error = vm_map_lookup(&map, sealing_bitmap_base, VM_PROT_READ | VM_PROT_WRITE | VM_PROT_COPY , &entry, &obj, &pindex, &prot, &wired);
+	if(error!=KERN_SUCCESS){
+		printf("failed1\n");
+		return KERN_FAILURE;
+	}
+
+	obj->ref_count++;
+	vm_map_lock_upgrade(map);
+	vm_map_unlock(map);
+	struct vmspace *vms = td->td_proc->p_vmspace;
+	vm_pointer_t addr = round_page((vm_offset_t)vms->vm_daddr + lim_max(td, RLIMIT_DATA));
+
+	error = vm_map_find(map, obj, 0, &addr, SEALING_BITMAP_SIZE, 0, VMFS_ANY_SPACE, VM_PROT_READ|VM_PROT_COPY| VM_PROT_WRITE, VM_PROT_READ|VM_PROT_COPY| VM_PROT_WRITE, MAP_COPY_ON_WRITE);
+	if(error!=KERN_SUCCESS){
+		printf("failed\n");
+		return KERN_FAILURE;
+	}
+
+	crc->sealing_bitmap_copy = addr;
+	return KERN_SUCCESS;
+}
+*/
+
+/*
+ * Copy the sealing bitmap - with persistent mapping optimization.
+ * The mapping is allocated once per process and reused for subsequent
+ * revocation passes. Only the data copy is performed on each call.
+ */
+int vm_cheri_revoke_sealing_bitmap_copy(struct thread *td, vm_map_t map, struct vm_cheri_revoke_cookie* crc){
+	u_long sealing_bitmap_base = cc_read();
+	struct proc *p = td->td_proc;
+	vm_pointer_t addr;
+	int error;
+
+	/*
+	 * Check if we already have a persistent mapping for this process.
+	 * If not, allocate one. The mapping will be reused for all future
+	 * revocation passes, avoiding vm_object_allocate and vm_map_find overhead.
+	 */
+	if (p->cheri_cc_sealing_base_copy == 0) {
+		/* First time - allocate the mapping */
+		struct vmspace *vms = p->p_vmspace;
+		addr = round_page((vm_offset_t)vms->vm_daddr + lim_max(td, RLIMIT_DATA));
+
+		vm_object_t vmo_sealing_copy = vm_object_allocate(OBJT_SWAP, SEALING_BITMAP_SIZE);
+		error = vm_map_find(map, vmo_sealing_copy, 0, &addr, SEALING_BITMAP_SIZE, 0,
+		    VMFS_ANY_SPACE, VM_PROT_READ | VM_PROT_WRITE,
+		    VM_PROT_READ | VM_PROT_WRITE, MAP_COPY_ON_WRITE);
+		if (error != KERN_SUCCESS) {
+			vm_object_deallocate(vmo_sealing_copy);
+			printf("vm_cheri_revoke_sealing_bitmap_copy: vm_map_find failed\n");
+			return KERN_FAILURE;
+		}
+
+		/* Store the persistent mapping address */
+		p->cheri_cc_sealing_base_copy = addr;
+	} else {
+		/* Reuse existing mapping */
+		addr = p->cheri_cc_sealing_base_copy;
+	}
+
+	/*
+	 * Copy sealing bitmap data to the (possibly reused) mapping.
+	 * This is the only work done on subsequent revocation passes.
+	 */
+	for (int offset = 0; offset < SEALING_BITMAP_SIZE; offset += PAGE_SIZE) {
+		ptraddr_t vaddr_old = sealing_bitmap_base + offset;
+		ptraddr_t vaddr_new = addr + offset;
+		/*
+		 * Build page-scoped capabilities, not bitmap-scoped ones.
+		 * Using SEALING_BITMAP_SIZE here would make the capability on
+		 * the second+ iteration span base+offset to base+offset+256KB,
+		 * crossing a CHERI reservation boundary and triggering a panic
+		 * in _cheri_capability_build_user_rwx.  PAGE_SIZE is always
+		 * reservation-aligned.
+		 */
+		void* __capability vaddr_old_cap = cheri_capability_build_user_data(
+		    CHERI_PERM_LOAD | CHERI_PERM_STORE | CHERI_PERM_GLOBAL,
+		    vaddr_old, PAGE_SIZE, 0);
+		void* __capability vaddr_new_cap = cheri_capability_build_user_data(
+		    CHERI_PERM_LOAD | CHERI_PERM_STORE | CHERI_PERM_GLOBAL,
+		    vaddr_new, PAGE_SIZE, 0);
+		void* kernel_buf = malloc(PAGE_SIZE, M_TEMP, M_WAITOK | M_ZERO);
+		error = copyin(vaddr_old_cap, kernel_buf, PAGE_SIZE);
+		if (error) {
+			free(kernel_buf, M_TEMP);
+			return KERN_FAILURE;
+		}
+		error = copyout(kernel_buf, vaddr_new_cap, PAGE_SIZE);
+		if (error) {
+			free(kernel_buf, M_TEMP);
+			return KERN_FAILURE;
+		}
+		free(kernel_buf, M_TEMP);
+	}
+
+	crc->sealing_bitmap_copy = addr;
+	return KERN_SUCCESS;
+}
+
+
 /*
  * XXX Should this encapsulate a barrier around epochs and stat collection and
  * all that?  I don't think there are any meaningful races around epoch close,
@@ -1212,31 +1332,6 @@ vm_cheri_revoke_cookie_init(vm_map_t map, struct vm_cheri_revoke_cookie *crc)
 		return (KERN_INVALID_ARGUMENT);
 
 	crc->map = map;
-	if ((curproc->p_flag & P_SYSTEM) != 0) {
-		KASSERT(map->vm_cheri_async_revoke_shadow != NULL,
-		    ("cheri_revoke_shadow not installed in kernel map"));
-		crc->crshadow = map->vm_cheri_async_revoke_shadow;
-		return (KERN_SUCCESS);
-	}
-
-	/*
-	 * Build the capability to the shadow bitmap that we will use for probes
-	 * during this revocation pass or fault.  We are holding the map xlocked
-	 * at this point, so we cannot use any of the checked constructors,
-	 * which, with INVARIANTS, try to validate that the cap does not span
-	 * reservations and, so, slock the map; WITNESS sensibly objects.
-	 *
-	 * TODO:
-	 * For foreign maps, we should take advantage of map->vm_cheri_revoke_sh
-	 * and construct a mapping in the local address space to manipulate
-	 * the remote one!
-	 */
-	crc->crshadow = cheri_capability_build_user_rwx_unchecked(
-	    CHERI_PERM_LOAD | CHERI_PERM_GLOBAL,
-	    curproc->p_sysent->sv_cheri_revoke_shadow_base,
-	    curproc->p_sysent->sv_cheri_revoke_shadow_length,
-	    curproc->p_sysent->sv_cheri_revoke_shadow_offset);
-
 	return (KERN_SUCCESS);
 }
 

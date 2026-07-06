@@ -67,6 +67,8 @@ struct trapframe {
 	uint64_t tf_sstatus;
 	uint64_t tf_stval;
 	uint64_t tf_scause;
+	uint64_t tf_ccp;
+
 };
 
 #ifdef _KERNEL

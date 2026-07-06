@@ -16,6 +16,10 @@
  * HR0011-18-C-0016 ("ECATS"), as part of the DARPA SSITH research
  * programme.
  *
+ * Colored-Cap modifications: 
+ *      Author: Ruben Sturm, Merve Gulmez
+ *      Copyright (c) 2025 Ericsson AB 
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
@@ -66,16 +70,12 @@
 /* User-defined permission bits. */
 #define	CHERI_PERM_SW0			(1 << 15)	/* 0x00008000 */
 #define	CHERI_PERM_SW1			(1 << 16)	/* 0x00010000 */
-#define	CHERI_PERM_SW2			(1 << 17)	/* 0x00020000 */
-#define	CHERI_PERM_SW3			(1 << 18)	/* 0x00040000 */
 
 /*
  * CHERI_PERMS_SWALL: Mask of all available software-defined permissions
  * CHERI_PERMS_HWALL: Mask of all available hardware-defined permissions
  */
-#define	CHERI_PERMS_SWALL						\
-	(CHERI_PERM_SW0 | CHERI_PERM_SW1 | CHERI_PERM_SW2 |		\
-	CHERI_PERM_SW3)
+#define	CHERI_PERMS_SWALL	(CHERI_PERM_SW0 | CHERI_PERM_SW1)
 
 #define	CHERI_PERMS_HWALL						\
 	(CHERI_PERM_GLOBAL | CHERI_PERM_EXECUTE |			\
@@ -170,11 +170,12 @@
  * User and kernel software should be written so as to not place assumptions
  * about the specific values used here, as they may change.
  */
-#define	CHERI_OTYPE_BITS	(18)
-#define	CHERI_OTYPE_USER_MIN	(0)
-#define	CHERI_OTYPE_USER_MAX	((1 << (CHERI_OTYPE_BITS - 1)) - 1)
-#define	CHERI_OTYPE_KERN_MIN	(1 << (CHERI_OTYPE_BITS - 1))
-#define	CHERI_OTYPE_KERN_MAX	((1 << CHERI_OTYPE_BITS) - 1)
+#define	CHERI_OTYPE_BITS	(21)
+#define CHERI_OTYPES_LEGACY		(4)
+#define	CHERI_OTYPE_USER_MIN	(1)
+#define	CHERI_OTYPE_USER_MAX	((1 << CHERI_OTYPE_BITS) - CHERI_OTYPES_LEGACY) //-1 to -3 are reserved
+#define	CHERI_OTYPE_KERN_MIN	CHERI_OTYPE_USER_MAX
+#define	CHERI_OTYPE_KERN_MAX	CHERI_OTYPE_USER_MAX
 #define	CHERI_OTYPE_KERN_FLAG	(1 << (CHERI_OTYPE_BITS - 1))
 #define	CHERI_OTYPE_ISKERN(x)	(((x) & CHERI_OTYPE_KERN_FLAG) != 0)
 #define	CHERI_OTYPE_ISUSER(x)	(!(CHERI_OTYPE_ISKERN(x)))

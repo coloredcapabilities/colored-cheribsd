@@ -142,6 +142,7 @@ uiomove_fromphys(vm_page_t ma[], vm_offset_t offset, int n, struct uio *uio)
 			    &vaddr, 1, true);
 			mapped = false;
 		}
+
 		IOVEC_ADVANCE(iov, cnt);
 		uio->uio_resid -= cnt;
 		uio->uio_offset += cnt;

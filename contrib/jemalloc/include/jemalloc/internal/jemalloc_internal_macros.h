@@ -121,7 +121,7 @@ JEMALLOC_DIAGNOSTIC_DISABLE_SPURIOUS
 	(_ptr == NULL ? NULL :						\
 	 cheri_andperm(cheri_setboundsexact(_ptr,			\
 	     _size == 0 ? 1 : _size),					\
-	     CHERI_PERMS_USERSPACE_DATA & ~CHERI_PERM_SW_VMEM));	\
+	     CHERI_PERMS_USERSPACE_DATA | CHERI_PERM_SW_VMEM));	\
 })
 
 /*

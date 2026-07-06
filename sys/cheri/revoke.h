@@ -5,6 +5,10 @@
  * Copyright (c) 2020-2022 Microsoft Corp.
  * All rights reserved.
  *
+ * Colored-Cap modifications: 
+ *      Author: Ruben Sturm, Merve Gulmez
+ *      Copyright (c) 2025 Ericsson AB 
+ *
  * This software was developed by SRI International and the University of
  * Cambridge Computer Laboratory under DARPA/AFRL contract FA8750-10-C-0237
  * ("CTSRD"), as part of the DARPA CRASH research programme.
@@ -274,6 +278,7 @@ struct cheri_revoke_info {
 	const ptraddr_t			base_otype;
 
 	struct cheri_revoke_epochs	epochs;
+	__uint8_t* __capability sealing_bitmap_copy;
 };
 
 struct cheri_revoke_syscall_info {
@@ -300,8 +305,12 @@ struct cheri_revoke_syscall_info {
  * minimal-bookkeeping version of libmrs uses this, and that's very convenient.
  */
 #define	CHERI_REVOKE_SHADOW_NOVMEM_ENTIRE	0x07	/* The entire shadow region */
+ 
+#define CHERI_CC_SEALING_BITMAP				0x08    /* Colored capability sealing bitmap */
+#define CHERI_CC_SEALING_BITMAP_COPY		0x09    /* Colored capability sealing bitmap copy*/
 
-#define	CHERI_REVOKE_SHADOW_SPACE_MASK		0x07	/* Flag bits for shadow index */
+
+#define	CHERI_REVOKE_SHADOW_SPACE_MASK		0xf	/* Flag bits for shadow index */
 
 #ifndef _KERNEL
 /*

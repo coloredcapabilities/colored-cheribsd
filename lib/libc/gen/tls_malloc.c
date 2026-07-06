@@ -1,6 +1,11 @@
 /*-
  * Copyright 1996-1998 John D. Polstra.
  * Copyright (c) 2015-2017 SRI International
+ *
+ * Colored-Cap modifications: 
+ *      Author: Ruben Sturm, Merve Gulmez
+ *      Copyright (c) 2025 Ericsson AB 
+ *
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -74,16 +79,16 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdbool.h>
 #include <unistd.h>
 
 #include "libc_private.h"
 #include "spinlock.h"
+#include "../stdlib/u_subr_unit.h"
 
 #ifndef __CHERI_PURE_CAPABILITY__
 #define	cheri_setbounds(ptr, size)	((void *)(ptr))
 #define	cheri_andperm(ptr, size)	((void *)(ptr))
-#define	CHERI_PERMS_USERSPACE_DATA	0
-#define	CHERI_PERM_SW_VMEM		0
 #endif
 
 static spinlock_t tls_malloc_lock = _SPINLOCK_INITIALIZER;
@@ -91,7 +96,9 @@ static spinlock_t tls_malloc_lock = _SPINLOCK_INITIALIZER;
 #define	TLS_MALLOC_UNLOCK	if (__isthreaded) _SPINUNLOCK(&tls_malloc_lock)
 static void morecore(int);
 static void *__tls_malloc_aligned(size_t size, size_t align);
-
+#ifdef CAPREVOKE
+static void tls_caprevoke_init(void);
+#endif
 /*
  * The overhead on a block is one pointer. When free, this space
  * contains a pointer to the next free block. When in use, the first
@@ -139,8 +146,6 @@ static struct ov_listhead nextf[NBUCKETS];
 
 #ifdef CAPREVOKE
 #define	MAX_QUARANTINE	(1024 * 1024)
-static struct ov_listhead quarantine_bufs[NBUCKETS];
-static size_t quarantine_size;
 #endif
 
 static const size_t pagesz = PAGE_SIZE;			/* page size */
@@ -150,13 +155,19 @@ static const size_t pagesz = PAGE_SIZE;			/* page size */
 static caddr_t	pagepool_start, pagepool_end;
 static SLIST_HEAD(, pagepool_header) curpp = SLIST_HEAD_INITIALIZER(curpp);
 
-#ifdef CAPREVOKE
-static volatile const struct cheri_revoke_info *cri;
 
-static void paint_shadow(void *mem, size_t size);
-static void clear_shadow(void *mem, size_t size);
-static void do_revoke();
-#endif
+
+#ifdef CAPREVOKE
+/* Colored capabilities*/
+static void* cc_set_objectid(void* p){
+	int otype = alloc_unr(cheri_otypes_ptr);
+	if (otype < 0) {
+		return p;
+	}
+	p = __builtin_cheri_cc_set_type(p, otype);
+	return p;
+}
+#endif /* CAPREVOKE */
 
 static int
 __morepages(int n)
@@ -202,7 +213,7 @@ __rederive_pointer(void *ptr)
 	SLIST_FOREACH(pp, &curpp, ph_next) {
 		if (cheri_is_address_inbounds(pp, cheri_getbase(ptr))) {
 			TLS_MALLOC_UNLOCK;
-			return (cheri_setaddress(pp, cheri_getaddress(ptr)));
+			return ( __builtin_cheri_cc_set_type(cheri_setaddress(pp, cheri_getaddress(ptr)), -1));
 		}
 	}
 	TLS_MALLOC_UNLOCK;
@@ -216,67 +227,13 @@ bound_ptr(void *mem, size_t nbytes)
 	void *ptr;
 
 	ptr = cheri_setbounds(mem, nbytes);
+#ifdef CAPREVOKE
+	ptr = cc_set_objectid(ptr);
+#endif
 	ptr = cheri_andperm(ptr,
 	    CHERI_PERMS_USERSPACE_DATA & ~CHERI_PERM_SW_VMEM);
 	return (ptr);
 }
-
-#ifdef CAPREVOKE
-static void
-try_revoke(int target_bucket)
-{
-	int bucket;
-	struct overhead *op;
-
-	/*
-	 * Don't revoke unless there is enough in quarantine and some of
-	 * it would be returned to the bucket we want to refill.
-	 */
-	if (quarantine_size < MAX_QUARANTINE ||
-	    SLIST_EMPTY(&quarantine_bufs[target_bucket]))
-		return;
-
-	if (cri == NULL) {
-		if (cheri_revoke_get_shadow(CHERI_REVOKE_SHADOW_INFO_STRUCT,
-		    NULL, (void **)&cri) != 0) {
-			if (errno == ENOSYS) {
-				/*
-				 * Revocation is not supported.
-				 * Just pretend like it worked.
-				 */
-				goto dequarantine;
-			} else
-				abort();
-		}
-	}
-
-
-	for (bucket = 0; bucket < NBUCKETS; bucket++) {
-		SLIST_FOREACH(op, &quarantine_bufs[bucket], ov_next)
-			paint_shadow(op, FIRST_BUCKET_SIZE << bucket);
-	}
-	atomic_thread_fence(memory_order_acq_rel);
-
-	do_revoke();
-
-	for (bucket = 0; bucket < NBUCKETS; bucket++) {
-		SLIST_FOREACH(op, &quarantine_bufs[bucket], ov_next)
-			clear_shadow(op, FIRST_BUCKET_SIZE << bucket);
-	}
-	atomic_thread_fence(memory_order_acq_rel);
-
-dequarantine:
-	for (bucket = 0; bucket < NBUCKETS; bucket++) {
-		while (!SLIST_EMPTY(&quarantine_bufs[bucket])) {
-			op = SLIST_FIRST(&quarantine_bufs[bucket]);
-			SLIST_REMOVE_HEAD(&quarantine_bufs[bucket], ov_next);
-			SLIST_INSERT_HEAD(&quarantine_bufs[bucket], op,
-			    ov_next);
-		}
-	}
-	quarantine_size = 0;
-}
-#endif
 
 static void *
 __tls_malloc(size_t nbytes)
@@ -307,10 +264,6 @@ __tls_malloc(size_t nbytes)
 	 * request more memory from the system.
 	 */
 	TLS_MALLOC_LOCK;
-#ifdef CAPREVOKE
-	if (SLIST_EMPTY(bucketp))
-		try_revoke(bucket);
-#endif
 	if (SLIST_EMPTY(bucketp)) {
 		morecore(bucket);
 		if (SLIST_EMPTY(bucketp)) {
@@ -331,6 +284,11 @@ void *
 tls_malloc(size_t nbytes)
 {
 	void *mem;
+#ifdef CAPREVOKE
+	if (!global_cheri_otypes_initialized)
+		tls_caprevoke_init();
+#endif
+
 #ifdef __CHERI_PURE_CAPABILITY__
 	size_t align, mask;
 
@@ -468,28 +426,51 @@ paint_shadow(void *mem, size_t size)
 	    (ptraddr_t)mem, size);
 }
 
-static void
-clear_shadow(void *mem, size_t size)
+/* Colored capabilities implementation */
+static void tls_caprevoke_init(void)
 {
-	struct pagepool_header *pp;
-
-	pp = cheri_setoffset(pp, 0);
-	caprev_shadow_nomap_clear_raw(cri->base_mem_nomap, pp->ph_shadow,
-	    (ptraddr_t)mem, size);
-}
-
-static void
-do_revoke(void)
-{
-	int error;
-
-	atomic_thread_fence(memory_order_acq_rel);
-	cheri_revoke_epoch_t start_epoch = cri->epochs.enqueue;
-	while (!cheri_revoke_epoch_clears(cri->epochs.dequeue, start_epoch)) {
-		error = cheri_revoke(CHERI_REVOKE_LAST_PASS, start_epoch, NULL);
-		assert(error == 0);
+	if (global_cheri_otypes_initialized) {
+		return;
 	}
+
+	if (cri == NULL) {
+		if (cheri_revoke_get_shadow(CHERI_REVOKE_SHADOW_INFO_STRUCT,
+		    NULL, (void **)&cri) != 0) {
+			abort();
+		}
+	}
+
+	if (cheri_revoke_get_shadow(CHERI_CC_SEALING_BITMAP, NULL,
+	    &global_sealing_bitmap) != 0) {
+		abort();
+	}
+	global_sealing_bitmap_size = __builtin_cheri_length_get(global_sealing_bitmap);
+	
+	cheri_otypes_ptr = get_global_cheri_otypes();
+
 }
+
+
+
+void tls_caprevoke_mark_sealed(void* __capability ptr){
+	int otype = cheri_gettype(ptr);
+	if(otype==-1){
+		return;
+	}
+
+	int byte_offset = otype/8;
+	int bit_offset = otype%8;
+	char sealing_byte = ((char*)global_sealing_bitmap)[byte_offset];
+
+	/* Verify that the memory is not already sealed */
+	if((sealing_byte>>bit_offset)&1){
+		exit(-1);
+	}
+	/* Set sealing bitmap value */
+	((char*)global_sealing_bitmap)[byte_offset] = sealing_byte | (1<<bit_offset);
+	asm("fence\n\t");
+}
+
 #endif /* CAPREVOKE */
 
 void
@@ -503,15 +484,16 @@ tls_free(void *cp)
 	op = find_overhead(cp);
 	if (op == NULL)
 		return;
+	
+#ifdef CAPREVOKE
+	tls_caprevoke_mark_sealed(cp);
+#endif
+
 	TLS_MALLOC_LOCK;
 	bucket = op->ov_index;
 	assert(bucket < NBUCKETS);
-#ifdef CAPREVOKE
-	SLIST_INSERT_HEAD(&quarantine_bufs[bucket], op, ov_next);
-	quarantine_size += FIRST_BUCKET_SIZE << bucket;
-#else
+
 	SLIST_INSERT_HEAD(&nextf[bucket], op, ov_next);
-#endif
 	TLS_MALLOC_UNLOCK;
 }
 
@@ -536,6 +518,10 @@ void *
 tls_malloc_aligned(size_t nbytes, size_t align)
 {
 #ifdef __CHERI_PURE_CAPABILITY__
+#ifdef CAPREVOKE
+	if (!global_cheri_otypes_initialized)
+		tls_caprevoke_init();
+#endif
 	size_t mask;
 
 	mask = CHERI_REPRESENTABLE_ALIGNMENT_MASK(nbytes);

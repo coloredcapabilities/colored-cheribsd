@@ -8,6 +8,10 @@
  * Technology) under DARPA contract HR0011-18-C-0016 ("ECATS"), as part of the
  * DARPA SSITH research programme.
  *
+ * Colored-Cap modifications: 
+ *      Author: Ruben Sturm
+ *      Copyright (c) 2025 Ericsson AB 
+ *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
  * are met:
@@ -268,7 +272,7 @@ vm_cheri_revoke_test(const struct vm_cheri_revoke_cookie *crc, uintcap_t cut)
 		enable_user_memory_access();
 #endif
 		res = crc->map->vm_cheri_revoke_test(crc->crshadow, cut,
-		    cheri_getperm(cut), start, end);
+		    cheri_getperm(cut), start, end, crc->sealing_bitmap_copy);
 #ifdef CHERI_CAPREVOKE_FAST_COPYIN
 		disable_user_memory_access();
 		curthread->td_pcb->pcb_onfault = prev_onfault;
